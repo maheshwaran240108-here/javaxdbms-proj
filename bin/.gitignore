@@ -1,0 +1,4 @@
+/bin/
+*.db
+/model_artifacts/*.model
+.DS_Store
