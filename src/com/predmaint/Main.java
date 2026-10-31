@@ -114,6 +114,7 @@ public class Main {
                         break;
                     case 7:
                         System.out.println("Exiting System. Goodbye!");
+                        scanner.close();
                         System.exit(0);
                     default:
                         System.out.println("Invalid option! Please try again.");
