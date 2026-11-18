@@ -1,0 +1,13 @@
+# Compiled Java files
+bin/
+*.class
+
+# Database
+*.db
+
+# Trained model
+model_artifacts/*.model
+
+# IDE files
+.vscode/
+.idea/

@@ -9,9 +9,14 @@ public class DatabaseConfig {
     private static final String DB_URL = "jdbc:sqlite:predictive_maintenance.db";
 
     public static Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(DB_URL);
+    try {
+        Class.forName("org.sqlite.JDBC");
+    } catch (ClassNotFoundException e) {
+        throw new SQLException("SQLite JDBC Driver not found", e);
     }
 
+    return DriverManager.getConnection(DB_URL);
+}
     public static void initializeDatabase() {
         String sqlReadings = "CREATE TABLE IF NOT EXISTS machine_readings (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, machine_id TEXT, air_temp REAL, " +
