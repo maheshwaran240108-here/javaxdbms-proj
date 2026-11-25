@@ -219,14 +219,15 @@ public class ApiServer {
             return json(map("exists", false, "machineId", ""));
         }
         String upper = id.toUpperCase(java.util.Locale.ROOT);
-        boolean exists = false;
+        boolean inDatabase = false;
         try (java.sql.Connection conn = com.predmaint.config.DatabaseConfig.getConnection();
              java.sql.PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM machine_readings WHERE UPPER(machine_id) = ? LIMIT 1")) {
             ps.setString(1, upper);
             try (java.sql.ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) exists = true;
+                if (rs.next()) inDatabase = true;
             }
         }
+        boolean exists = inDatabase;
         if (!exists) {
             if (cachedProductIds == null) {
                 java.util.Set<String> ids = new java.util.HashSet<>();
@@ -239,7 +240,7 @@ public class ApiServer {
             }
             exists = cachedProductIds.contains(upper);
         }
-        return json(map("exists", exists, "machineId", id));
+        return json(map("exists", exists, "inDatabase", inDatabase, "machineId", id));
     }
 
     private String reports() throws Exception {
@@ -333,6 +334,13 @@ public class ApiServer {
         Map<String, String> fields = parseFields(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
         String machineId = required(fields, "machineId").trim();
         if (machineId.isEmpty()) throw new IllegalArgumentException("Machine ID is required.");
+        try (java.sql.Connection conn = com.predmaint.config.DatabaseConfig.getConnection();
+             java.sql.PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM machine_readings WHERE UPPER(machine_id) = ? LIMIT 1")) {
+            ps.setString(1, machineId.toUpperCase(java.util.Locale.ROOT));
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) throw new IllegalArgumentException("Machine ID already exists.");
+            }
+        }
 
         MachineReading reading = new MachineReading(machineId,
                 number(fields, "airTemp"), number(fields, "processTemp"),

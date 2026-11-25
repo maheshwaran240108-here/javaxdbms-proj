@@ -368,7 +368,7 @@ function Probability({ value }) {
 
 function Assessment({ onSubmit, result, busy }) {
   const [machineInput, setMachineInput] = useState('');
-  const [lookup, setLookup] = useState({ status: 'idle', exists: false, machineId: '' });
+  const [lookup, setLookup] = useState({ status: 'idle', inDatabase: false, machineId: '' });
   const [imgSrc, setImgSrc] = useState(null);
   const [imgLabel, setImgLabel] = useState('');
 
@@ -376,32 +376,33 @@ function Assessment({ onSubmit, result, busy }) {
 
   useEffect(() => {
     if (!activeId) {
-      setLookup({ status: 'idle', exists: false, machineId: '' });
+      setLookup({ status: 'idle', inDatabase: false, machineId: '' });
       setImgSrc(null);
       setImgLabel('');
       return undefined;
     }
     let cancelled = false;
-    setLookup((prev) => ({ ...prev, status: 'checking', machineId: activeId }));
+    setLookup((prev) => ({ ...prev, status: 'checking', inDatabase: false, machineId: activeId }));
     const timer = window.setTimeout(async () => {
       try {
         const res = await api.lookupMachine(activeId);
         if (cancelled) return;
-        if (res.exists) {
-          setLookup({ status: 'found', exists: true, machineId: activeId });
-          const visual = getMachineVisual(activeId);
-          setImgSrc(visual?.src || null);
-          setImgLabel(visual?.label || '');
-        } else {
-          setLookup({ status: 'not-found', exists: false, machineId: activeId });
+        const visual = getMachineVisual(activeId);
+        if (res.inDatabase) {
+          setLookup({ status: 'duplicate', inDatabase: true, machineId: activeId });
           setImgSrc(null);
           setImgLabel('');
+        } else {
+          setLookup({ status: 'ready', inDatabase: false, machineId: activeId });
+          setImgSrc(visual?.src || null);
+          setImgLabel(visual?.label || '');
         }
       } catch {
         if (!cancelled) {
-          setLookup({ status: 'not-found', exists: false, machineId: activeId });
-          setImgSrc(null);
-          setImgLabel('');
+          const visual = getMachineVisual(activeId);
+          setLookup({ status: 'ready', inDatabase: false, machineId: activeId });
+          setImgSrc(visual?.src || null);
+          setImgLabel(visual?.label || '');
         }
       }
     }, 250);
@@ -419,27 +420,17 @@ function Assessment({ onSubmit, result, busy }) {
   const handleFormSubmit = async (event) => {
     event.preventDefault();
     const id = machineInput.trim();
-    if (!id) return;
-    if (lookup.status === 'not-found') return;
-    if (lookup.status !== 'found') {
-      try {
-        const res = await api.lookupMachine(id);
-        if (!res.exists) {
-          setLookup({ status: 'not-found', exists: false, machineId: id });
-          setImgSrc(null);
-          setImgLabel('');
-          return;
-        }
-        setLookup({ status: 'found', exists: true, machineId: id });
-        const visual = getMachineVisual(id);
-        setImgSrc(visual?.src || null);
-        setImgLabel(visual?.label || '');
-      } catch {
-        setLookup({ status: 'not-found', exists: false, machineId: id });
+    if (!id || lookup.inDatabase) return;
+    try {
+      const res = await api.lookupMachine(id);
+      if (res.inDatabase) {
+        setLookup({ status: 'duplicate', inDatabase: true, machineId: id });
         setImgSrc(null);
         setImgLabel('');
         return;
       }
+    } catch {
+      // Backend will also enforce uniqueness on POST /api/predictions
     }
     await onSubmit(event);
   };
@@ -463,7 +454,7 @@ function Assessment({ onSubmit, result, busy }) {
       <form className="surface assessment-form" onSubmit={handleFormSubmit}>
         <div className="form-section-title"><span className="step-number">01</span><div><h2>Machine details</h2><p>Identify the equipment and current operating conditions.</p></div></div>
         <label className="field field-wide">
-          <span>Machine identifier</span>
+          <span>Machine ID</span>
           <input
             name="machineId"
             required
@@ -471,8 +462,14 @@ function Assessment({ onSubmit, result, busy }) {
             value={machineInput}
             onChange={(event) => setMachineInput(event.target.value)}
           />
-          <small>Use the ID shown on the equipment register.</small>
+          <small>Enter a unique Machine ID to register and assess the machine.</small>
         </label>
+        {lookup.status === 'duplicate' && (
+          <div className="inline-message inline-error" style={{ marginLeft: '38px', marginBottom: '12px', maxWidth: '380px' }}>
+            <ShieldAlert size={15} />
+            <span>Machine ID already exists in the database. Please enter a unique Machine ID.</span>
+          </div>
+        )}
         <div className="form-divider" />
         <div className="form-section-title"><span className="step-number">02</span><div><h2>Sensor readings</h2><p>Enter the latest measurements from the machine.</p></div></div>
         <div className="field-grid">
@@ -484,7 +481,7 @@ function Assessment({ onSubmit, result, busy }) {
         </div>
         <div className="form-actions">
           <span><ShieldAlert size={15} /> Values are stored with the assessment.</span>
-          <button className="button button-primary" disabled={busy || lookup.status === 'not-found'}>
+          <button className="button button-primary" disabled={busy || lookup.inDatabase}>
             <Activity size={16} />{busy ? 'Assessing…' : 'Run assessment'}<ArrowRight size={15} />
           </button>
         </div>
@@ -492,10 +489,10 @@ function Assessment({ onSubmit, result, busy }) {
 
       <aside className="surface result-panel">
         <div className="eyebrow">ASSESSMENT RESULT</div>
-        {lookup.status === 'not-found' && !result && (
+        {lookup.status === 'duplicate' && !result && (
           <div className="inline-message inline-error" style={{ marginTop: '14px', textAlign: 'left' }}>
             <ShieldAlert size={15} />
-            <span>Machine ID not found.</span>
+            <span>Machine ID already exists. Duplicate machine registration is prevented.</span>
           </div>
         )}
         {imgSrc && (
@@ -524,7 +521,7 @@ function Assessment({ onSubmit, result, busy }) {
             <p className="result-recommendation">{recommendation}</p>
             <div className="anomaly-list"><h3>Sensor checks</h3>{(result.anomalies || []).length ? result.anomalies.map((anomaly) => <div className="anomaly-item" key={anomaly}><ShieldAlert size={15} />{anomaly}</div>) : <div className="anomaly-clear"><Check size={15} />No sensor anomalies detected</div>}</div>
           </>
-        ) : lookup.status !== 'not-found' ? (
+        ) : lookup.status !== 'duplicate' ? (
           <div className="result-placeholder"><div className="placeholder-icon"><Gauge size={23} /></div><h2>Awaiting readings</h2><p>Submit sensor values to see the machine’s current failure likelihood and sensor checks.</p><div className="placeholder-rule" /></div>
         ) : null}
       </aside>
