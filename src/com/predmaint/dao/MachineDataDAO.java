@@ -5,8 +5,129 @@ import com.predmaint.model.MachineReading;
 import com.predmaint.model.PredictionResult;
 
 import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MachineDataDAO {
+
+    public int[] getDashboardStats() throws SQLException {
+        int[] stats = new int[3];
+        String[] queries = {
+                "SELECT COUNT(*) FROM machine_readings",
+                "SELECT COUNT(*) FROM prediction_results WHERE risk_category='HIGH'",
+                "SELECT COUNT(*) FROM maintenance_alerts WHERE status='OPEN'"
+        };
+
+        try (Connection conn = DatabaseConfig.getConnection();
+             Statement stmt = conn.createStatement()) {
+            for (int i = 0; i < queries.length; i++) {
+                try (ResultSet rs = stmt.executeQuery(queries[i])) {
+                    if (rs.next()) {
+                        stats[i] = rs.getInt(1);
+                    }
+                }
+            }
+        }
+        return stats;
+    }
+
+    public int[] getRiskDistribution() throws SQLException {
+        String sql = "SELECT " +
+                "SUM(CASE WHEN risk_category='LOW' THEN 1 ELSE 0 END), " +
+                "SUM(CASE WHEN risk_category='MEDIUM' THEN 1 ELSE 0 END), " +
+                "SUM(CASE WHEN risk_category='HIGH' THEN 1 ELSE 0 END) " +
+                "FROM prediction_results";
+        try (Connection conn = DatabaseConfig.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) return new int[]{rs.getInt(1), rs.getInt(2), rs.getInt(3)};
+        }
+        return new int[3];
+    }
+
+    public List<String[]> getReadingsTrend() throws SQLException {
+        String sql = "SELECT DATE(created_at) AS reading_date, COUNT(*) AS reading_count " +
+                "FROM machine_readings GROUP BY DATE(created_at) " +
+                "ORDER BY DATE(created_at) DESC LIMIT 8";
+        List<String[]> rows = new ArrayList<>();
+        try (Connection conn = DatabaseConfig.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) rows.add(new String[]{rs.getString("reading_date"), rs.getString("reading_count")});
+        }
+        java.util.Collections.reverse(rows);
+        return rows;
+    }
+
+    public int saveReadings(List<MachineReading> readings) throws SQLException {
+        String sql = "INSERT INTO machine_readings(machine_id, air_temp, process_temp, rotational_speed, torque, tool_wear) VALUES(?,?,?,?,?,?)";
+        try (Connection conn = DatabaseConfig.getConnection();
+             PreparedStatement statement = conn.prepareStatement(sql)) {
+            conn.setAutoCommit(false);
+            try {
+                for (MachineReading reading : readings) {
+                    statement.setString(1, reading.getMachineId());
+                    statement.setDouble(2, reading.getAirTemp());
+                    statement.setDouble(3, reading.getProcessTemp());
+                    statement.setDouble(4, reading.getRotationalSpeed());
+                    statement.setDouble(5, reading.getTorque());
+                    statement.setDouble(6, reading.getToolWear());
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+                conn.commit();
+                return readings.size();
+            } catch (SQLException ex) {
+                conn.rollback();
+                throw ex;
+            }
+        }
+    }
+
+    public List<String[]> getRecentPredictions() throws SQLException {
+        String sql = "SELECT r.created_at, r.machine_id, p.risk_category, " +
+                "p.failure_probability, p.prediction FROM prediction_results p " +
+                "JOIN machine_readings r ON p.reading_id=r.id " +
+                "ORDER BY p.id DESC LIMIT 8";
+        List<String[]> rows = new ArrayList<>();
+
+        try (Connection conn = DatabaseConfig.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                rows.add(new String[]{
+                        rs.getString("created_at"),
+                        rs.getString("machine_id"),
+                        rs.getString("risk_category"),
+                        String.format("%.1f%%", rs.getDouble("failure_probability")),
+                        rs.getString("prediction")
+                });
+            }
+        }
+        return rows;
+    }
+
+    public List<String[]> getAlerts() throws SQLException {
+        String sql = "SELECT a.created_at, r.machine_id, a.alert_type, a.status, a.message " +
+                "FROM maintenance_alerts a JOIN machine_readings r ON a.reading_id=r.id " +
+                "ORDER BY a.id DESC";
+        List<String[]> rows = new ArrayList<>();
+
+        try (Connection conn = DatabaseConfig.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                rows.add(new String[]{
+                        rs.getString("created_at"),
+                        rs.getString("machine_id"),
+                        rs.getString("alert_type"),
+                        rs.getString("status"),
+                        rs.getString("message")
+                });
+            }
+        }
+        return rows;
+    }
 
     public int saveReading(MachineReading r) throws SQLException {
         String sql = "INSERT INTO machine_readings(machine_id, air_temp, process_temp, rotational_speed, torque, tool_wear) VALUES(?,?,?,?,?,?)";

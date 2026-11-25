@@ -14,6 +14,9 @@ import weka.filters.unsupervised.attribute.NumericToNominal;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 
 public class MLModelService {
@@ -112,49 +115,45 @@ public class MLModelService {
         );
     }
 
-    public void evaluateModel(Instances data) throws Exception {
+    public String evaluateModel(Instances data) throws Exception {
+        if (rfClassifier == null && !new File(MODEL_PATH).exists()) {
+            return "No trained model found. Train the model first.";
+        }
+        Map<String, Object> metrics = evaluateModelMetrics(data);
+        Map<String, Double> cm = (Map<String, Double>) metrics.get("confusionMatrix");
+        return String.format(Locale.US,
+            "MODEL EVALUATION REPORT\n\nAccuracy   %.2f%%\nPrecision  %.4f\nRecall     %.4f\nF1 score   %.4f\n\nCONFUSION MATRIX\nTrue negative   %.0f\nFalse positive  %.0f\nFalse negative  %.0f\nTrue positive   %.0f",
+            metrics.get("accuracy"), metrics.get("precision"), metrics.get("recall"), metrics.get("f1Score"),
+            cm.get("trueNegative"), cm.get("falsePositive"), cm.get("falseNegative"), cm.get("truePositive"));
+    }
 
+    public Map<String, Object> evaluateModelMetrics(Instances data) throws Exception {
         if (rfClassifier == null) {
-
             if (new File(MODEL_PATH).exists()) {
-                rfClassifier =
-                        (RandomForest) SerializationHelper.read(MODEL_PATH);
+                rfClassifier = (RandomForest) SerializationHelper.read(MODEL_PATH);
             } else {
-                System.out.println(
-                        "No trained model found! Please train the model first."
-                );
-                return;
+                throw new IllegalStateException("No trained model found. Train the model first.");
             }
         }
 
         Instances preparedData = prepareData(data);
-
         Evaluation eval = new Evaluation(preparedData);
+        eval.crossValidateModel(rfClassifier, preparedData, 10, new Random(1));
+        double[][] matrix = eval.confusionMatrix();
+        Map<String, Double> confusion = new LinkedHashMap<>();
+        confusion.put("trueNegative", matrix[0][0]);
+        confusion.put("falsePositive", matrix[0][1]);
+        confusion.put("falseNegative", matrix[1][0]);
+        confusion.put("truePositive", matrix[1][1]);
 
-        eval.crossValidateModel(
-                rfClassifier,
-                preparedData,
-                10,
-                new Random(1)
-        );
-
-        System.out.println("===========================================");
-        System.out.println("        MODEL EVALUATION REPORT            ");
-        System.out.println("===========================================");
-
-        System.out.printf("Accuracy  : %.2f%%\n", eval.pctCorrect());
-        System.out.printf("Precision : %.4f\n", eval.precision(1));
-        System.out.printf("Recall    : %.4f\n", eval.recall(1));
-        System.out.printf("F1-Score  : %.4f\n", eval.fMeasure(1));
-
-        System.out.println("\nConfusion Matrix:");
-
-        double[][] cm = eval.confusionMatrix();
-
-        System.out.println(" TN: " + cm[0][0] + " | FP: " + cm[0][1]);
-        System.out.println(" FN: " + cm[1][0] + " | TP: " + cm[1][1]);
-
-        System.out.println("===========================================");
+        Map<String, Object> metrics = new LinkedHashMap<>();
+        metrics.put("accuracy", eval.pctCorrect());
+        metrics.put("precision", eval.precision(1));
+        metrics.put("recall", eval.recall(1));
+        metrics.put("f1Score", eval.fMeasure(1));
+        metrics.put("confusionMatrix", confusion);
+        metrics.put("rowsEvaluated", data.numInstances());
+        return metrics;
     }
 
     public PredictionResult predict(
@@ -192,6 +191,7 @@ public class MLModelService {
         String prediction = "NORMAL OPERATION";
 
         if (failureProb >= 0.70) {
+            riskCategory = "HIGH";
             prediction = "FAILURE RISK DETECTED";
         } else if (failureProb >= 0.40) {
             riskCategory = "MEDIUM";

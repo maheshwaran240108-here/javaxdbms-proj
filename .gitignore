@@ -1,13 +1,6 @@
-# Compiled Java files
+node_modules/
 bin/
 *.class
-
-# Database
 *.db
-
-# Trained model
 model_artifacts/*.model
-
-# IDE files
-.vscode/
-.idea/
+dist/
