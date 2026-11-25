@@ -39,6 +39,9 @@ public class ApiServer {
     private final MachineDataDAO dao = new MachineDataDAO();
     private final MLModelService model = new MLModelService();
     private final AnomalyDetectorService anomalyDetector = new AnomalyDetectorService();
+    private volatile Map<String, Object> cachedModelMetrics = null;
+    private volatile long cachedModelMtime = -1L;
+    private volatile java.util.Set<String> cachedProductIds = null;
 
     public static void main(String[] args) throws IOException {
         new ApiServer().start();
@@ -51,6 +54,14 @@ public class ApiServer {
         server.setExecutor(Executors.newFixedThreadPool(4));
         server.start();
         System.out.println("Predictive maintenance API listening at http://localhost:" + PORT);
+        Thread warmCache = new Thread(() -> {
+            try {
+                getOrEvaluateMetrics();
+            } catch (Exception ignored) {
+            }
+        }, "metrics-cache-warmer");
+        warmCache.setDaemon(true);
+        warmCache.start();
     }
 
     private void handle(HttpExchange exchange) throws IOException {
@@ -91,6 +102,8 @@ public class ApiServer {
                 send(exchange, 200, evaluateModel());
             } else if ("GET".equals(method) && "/api/reports".equals(path)) {
                 send(exchange, 200, reports());
+            } else if ("GET".equals(method) && "/api/machines/lookup".equals(path)) {
+                send(exchange, 200, lookupMachine(exchange));
             } else if ("GET".equals(method) && "/api/reports/export".equals(path)) {
                 sendText(exchange, 200, reportCsv(), "text/csv; charset=utf-8");
             } else {
@@ -168,23 +181,98 @@ public class ApiServer {
         }
     }
 
+    private Map<String, Object> getOrEvaluateMetrics() throws Exception {
+        Path modelPath = Paths.get("model_artifacts/random_forest.model");
+        if (!Files.exists(modelPath)) {
+            cachedModelMetrics = null;
+            cachedModelMtime = -1L;
+            return null;
+        }
+        long mtime = Files.getLastModifiedTime(modelPath).toMillis();
+        if (cachedModelMetrics != null && cachedModelMtime == mtime) {
+            return cachedModelMetrics;
+        }
+        synchronized (model) {
+            if (cachedModelMetrics != null && cachedModelMtime == mtime) {
+                return cachedModelMetrics;
+            }
+            Map<String, Object> metrics = model.evaluateModelMetrics(CSVImporterService.loadDataset(DATASET_PATH));
+            cachedModelMetrics = metrics;
+            cachedModelMtime = mtime;
+            return metrics;
+        }
+    }
+
+    private String lookupMachine(HttpExchange exchange) throws Exception {
+        String query = exchange.getRequestURI().getRawQuery();
+        String id = "";
+        if (query != null) {
+            for (String param : query.split("&")) {
+                String[] kv = param.split("=", 2);
+                if (kv.length == 2 && "id".equals(kv[0])) {
+                    id = java.net.URLDecoder.decode(kv[1], StandardCharsets.UTF_8).trim();
+                    break;
+                }
+            }
+        }
+        if (id.isEmpty()) {
+            return json(map("exists", false, "machineId", ""));
+        }
+        String upper = id.toUpperCase(java.util.Locale.ROOT);
+        boolean exists = false;
+        try (java.sql.Connection conn = com.predmaint.config.DatabaseConfig.getConnection();
+             java.sql.PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM machine_readings WHERE UPPER(machine_id) = ? LIMIT 1")) {
+            ps.setString(1, upper);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) exists = true;
+            }
+        }
+        if (!exists) {
+            if (cachedProductIds == null) {
+                java.util.Set<String> ids = new java.util.HashSet<>();
+                Instances data = CSVImporterService.loadDataset(DATASET_PATH);
+                int col = findColumn(data, "Product ID", "Machine ID", "UDI");
+                for (Instance row : data) {
+                    ids.add(cell(row, col).trim().toUpperCase(java.util.Locale.ROOT));
+                }
+                cachedProductIds = ids;
+            }
+            exists = cachedProductIds.contains(upper);
+        }
+        return json(map("exists", exists, "machineId", id));
+    }
+
     private String reports() throws Exception {
         int[] stats = dao.getDashboardStats();
         int[] risks = dao.getRiskDistribution();
-        Map<String, Object> metrics = null;
-        if (Files.exists(Paths.get("model_artifacts/random_forest.model"))) {
-            synchronized (model) {
-                metrics = model.evaluateModelMetrics(CSVImporterService.loadDataset(DATASET_PATH));
-            }
-        }
+        Map<String, Object> metrics = getOrEvaluateMetrics();
         List<Map<String, Object>> trend = new ArrayList<>();
         for (String[] row : dao.getReadingsTrend()) {
             trend.add(map("date", row[0], "readings", Integer.parseInt(row[1])));
         }
+        List<Map<String, Object>> machines = new ArrayList<>();
+        for (String[] row : dao.getMachineReportSummaries()) {
+            machines.add(map(
+                    "machineId", row[0],
+                    "readingCount", Integer.parseInt(row[1]),
+                    "airTemp", Double.parseDouble(row[2]),
+                    "processTemp", Double.parseDouble(row[3]),
+                    "rotationalSpeed", Double.parseDouble(row[4]),
+                    "torque", Double.parseDouble(row[5]),
+                    "toolWear", Double.parseDouble(row[6]),
+                    "lastReadingAt", row[7],
+                    "failureProbability", row[8].isEmpty() ? null : Double.parseDouble(row[8]),
+                    "prediction", row[9].isEmpty() ? null : row[9],
+                    "riskCategory", row[10].isEmpty() ? null : row[10],
+                    "openAlerts", Integer.parseInt(row[11]),
+                    "totalAlerts", Integer.parseInt(row[12]),
+                    "latestAlert", row[13].isEmpty() ? null : row[13]
+            ));
+        }
         return json(map("stats", map("readings", stats[0], "normal", risks[0], "atRisk", risks[1] + risks[2],
                         "predictedFailures", risks[2], "openAlerts", stats[2]),
                 "riskDistribution", map("low", risks[0], "medium", risks[1], "high", risks[2]),
-                "readingsTrend", trend, "modelMetrics", metrics));
+                "readingsTrend", trend, "modelMetrics", metrics, "machines", machines));
     }
 
     private String reportCsv() throws SQLException {
@@ -269,15 +357,19 @@ public class ApiServer {
         Instances data = CSVImporterService.loadDataset(DATASET_PATH);
         synchronized (model) {
             model.trainModel(data);
+            cachedModelMetrics = null;
+            cachedModelMtime = -1L;
         }
         return json(map("message", "Random forest training completed", "rows", data.numInstances()));
     }
 
     private String evaluateModel() throws Exception {
-        Instances data = CSVImporterService.loadDataset(DATASET_PATH);
-        Map<String, Object> metrics;
-        synchronized (model) {
-            metrics = model.evaluateModelMetrics(data);
+        Map<String, Object> metrics = getOrEvaluateMetrics();
+        if (metrics == null) {
+            Instances data = CSVImporterService.loadDataset(DATASET_PATH);
+            synchronized (model) {
+                metrics = model.evaluateModelMetrics(data);
+            }
         }
         return json(metrics);
     }

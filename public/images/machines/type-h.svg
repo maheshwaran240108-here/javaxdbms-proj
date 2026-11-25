@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" fill="none">
+  <rect width="320" height="200" rx="10" fill="#0F1E36"/>
+  <path d="M0 40H320M0 80H320M0 120H320M0 160H320" stroke="#1E3A63" stroke-opacity="0.45"/>
+  <path d="M40 0V200M80 0V200M120 0V200M160 0V200M200 0V200M240 0V200M280 0V200" stroke="#1E3A63" stroke-opacity="0.45"/>
+  <!-- Heavy-Duty Rotary Turbine Assembly (Type H) -->
+  <rect x="48" y="64" width="64" height="72" rx="6" fill="#13294B" stroke="#2DD4BF" stroke-width="1.5"/>
+  <path d="M60 76H100M60 90H100M60 104H100M60 118H100" stroke="#5EEAD4" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="168" cy="100" r="48" fill="#162A4A" stroke="#5EEAD4" stroke-width="2.5"/>
+  <circle cx="168" cy="100" r="32" fill="#0A1628" stroke="#2DD4BF" stroke-width="2"/>
+  <circle cx="168" cy="100" r="14" fill="#0D9488" fill-opacity="0.35" stroke="#5EEAD4" stroke-width="1.5"/>
+  <circle cx="168" cy="100" r="5" fill="#5EEAD4"/>
+  <path d="M168 56V70M168 130V144M124 100H138M198 100H212" stroke="#2DD4BF" stroke-width="2.2" stroke-linecap="round"/>
+  <rect x="224" y="76" width="48" height="48" rx="6" fill="#13294B" stroke="#2DD4BF" stroke-width="1.5"/>
+  <path d="M236 100H260" stroke="#5EEAD4" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

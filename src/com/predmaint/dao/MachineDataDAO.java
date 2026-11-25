@@ -171,4 +171,42 @@ public class MachineDataDAO {
             pstmt.executeUpdate();
         }
     }
+
+    public List<String[]> getMachineReportSummaries() throws SQLException {
+        String sql = "SELECT r.machine_id, COUNT(r.id) AS reading_count, " +
+                "latest.air_temp, latest.process_temp, latest.rotational_speed, latest.torque, latest.tool_wear, latest.created_at, " +
+                "p.failure_probability, p.prediction, p.risk_category, " +
+                "(SELECT COUNT(*) FROM maintenance_alerts a2 JOIN machine_readings r2 ON a2.reading_id = r2.id WHERE r2.machine_id = r.machine_id AND a2.status = 'OPEN') AS open_alerts, " +
+                "(SELECT COUNT(*) FROM maintenance_alerts a3 JOIN machine_readings r3 ON a3.reading_id = r3.id WHERE r3.machine_id = r.machine_id) AS total_alerts, " +
+                "(SELECT a4.message FROM maintenance_alerts a4 JOIN machine_readings r4 ON a4.reading_id = r4.id WHERE r4.machine_id = r.machine_id ORDER BY a4.id DESC LIMIT 1) AS latest_alert " +
+                "FROM machine_readings r " +
+                "JOIN machine_readings latest ON latest.id = (SELECT MAX(id) FROM machine_readings WHERE machine_id = r.machine_id) " +
+                "LEFT JOIN prediction_results p ON p.id = (SELECT MAX(id) FROM prediction_results WHERE reading_id = latest.id) " +
+                "GROUP BY r.machine_id " +
+                "ORDER BY latest.id DESC LIMIT 50";
+        List<String[]> rows = new ArrayList<>();
+        try (Connection conn = DatabaseConfig.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            while (rs.next()) {
+                rows.add(new String[]{
+                        rs.getString("machine_id"),
+                        Integer.toString(rs.getInt("reading_count")),
+                        Double.toString(rs.getDouble("air_temp")),
+                        Double.toString(rs.getDouble("process_temp")),
+                        Double.toString(rs.getDouble("rotational_speed")),
+                        Double.toString(rs.getDouble("torque")),
+                        Double.toString(rs.getDouble("tool_wear")),
+                        rs.getString("created_at"),
+                        rs.getObject("failure_probability") == null ? "" : String.format("%.1f", rs.getDouble("failure_probability")),
+                        rs.getString("prediction") == null ? "" : rs.getString("prediction"),
+                        rs.getString("risk_category") == null ? "" : rs.getString("risk_category"),
+                        Integer.toString(rs.getInt("open_alerts")),
+                        Integer.toString(rs.getInt("total_alerts")),
+                        rs.getString("latest_alert") == null ? "" : rs.getString("latest_alert")
+                });
+            }
+        }
+        return rows;
+    }
 }

@@ -19,6 +19,7 @@ export const api = {
   dataset: () => request({ url: '/dataset' }),
   settings: () => request({ url: '/settings' }),
   reports: () => request({ url: '/reports' }),
+  lookupMachine: (id) => request({ url: `/machines/lookup?id=${encodeURIComponent(id)}` }),
   predict: (reading) => request({ url: '/predictions', method: 'POST', data: reading }),
   importDataset: async (file) => request({
     url: '/dataset/import',
