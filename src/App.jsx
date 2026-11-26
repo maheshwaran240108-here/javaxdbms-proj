@@ -194,12 +194,15 @@ function App() {
             <Routes>
               <Route path="/" element={<Overview dashboard={dashboard} alerts={alerts} loading={loading} search={search} onAlerts={() => choosePage('alerts')} onSelectMachine={setSelectedMachine} />} />
               <Route path="/dataset" element={<DatasetPage onSelectMachine={setSelectedMachine} />} />
-              <Route path="/model-training" element={<ModelTraining model={model} busy={busy} onTrain={() => runAction(api.train, (data) => `Model training completed successfully! (${data.rows.toLocaleString()} machine records studied)`)} />} />
-              <Route path="/model-evaluation" element={<ModelEvaluation metrics={evaluation} busy={busy} onEvaluate={async () => {
-                const data = await runAction(api.evaluate, () => 'Evaluation results loaded from Weka.');
+              <Route path="/model-training" element={<ModelTraining model={model} busy={busy} onTrain={() => runAction(api.train, (data) => `Model training completed successfully! (${data.rows.toLocaleString()} machine records studied)`)} onTrainFile={(file) => runAction(() => api.trainWithFile(file), (data) => `Model training completed successfully! (${data.rows.toLocaleString()} records studied from ${file.name})`)} />} />
+              <Route path="/model-evaluation" element={<ModelEvaluation metrics={evaluation} busy={busy} onTrainFile={(file) => runAction(() => api.trainWithFile(file), (data) => `Training complete · ${data.rows.toLocaleString()} rows processed from ${file.name}.`)} onEvaluate={async (file) => {
+                const data = await runAction(
+                  () => (file ? api.evaluateWithFile(file) : api.evaluate()),
+                  () => (file ? `Evaluation results loaded for ${file.name}.` : 'Evaluation results loaded from Weka.'),
+                );
                 if (data) setEvaluation(data);
               }} />} />
-              <Route path="/prediction" element={<Assessment onSubmit={submitPrediction} onClearResult={() => setResult(null)} result={result} busy={busy} />} />
+              <Route path="/prediction" element={<Assessment onSubmit={submitPrediction} predictions={dashboard.predictions || []} result={result} busy={busy} />} />
               <Route path="/alerts" element={<AlertLog alerts={alerts} loading={loading} />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
@@ -366,11 +369,19 @@ function Probability({ value }) {
   return <div className="probability-cell"><span>{percentage.toFixed(1)}%</span><i><b style={{ width: `${Math.min(percentage, 100)}%` }} /></i></div>;
 }
 
-function Assessment({ onSubmit, result, busy }) {
+function Assessment({ onSubmit, predictions, result, busy }) {
   const [machineInput, setMachineInput] = useState('');
+  const [sensors, setSensors] = useState({ airTemp: '', processTemp: '', rotationalSpeed: '', torque: '', toolWear: '' });
   const [lookup, setLookup] = useState({ status: 'idle', inDatabase: false, machineId: '' });
   const [imgSrc, setImgSrc] = useState(null);
   const [imgLabel, setImgLabel] = useState('');
+  const [savedMachines, setSavedMachines] = useState([]);
+
+  useEffect(() => {
+    api.reports().then((data) => {
+      if (data?.machines) setSavedMachines(data.machines);
+    }).catch(() => {});
+  }, [result]);
 
   const activeId = machineInput.trim();
 
@@ -388,15 +399,9 @@ function Assessment({ onSubmit, result, busy }) {
         const res = await api.lookupMachine(activeId);
         if (cancelled) return;
         const visual = getMachineVisual(activeId);
-        if (res.inDatabase) {
-          setLookup({ status: 'duplicate', inDatabase: true, machineId: activeId });
-          setImgSrc(null);
-          setImgLabel('');
-        } else {
-          setLookup({ status: 'ready', inDatabase: false, machineId: activeId });
-          setImgSrc(visual?.src || null);
-          setImgLabel(visual?.label || '');
-        }
+        setLookup({ status: res.inDatabase ? 'existing' : 'ready', inDatabase: Boolean(res.inDatabase), machineId: activeId });
+        setImgSrc(visual?.src || null);
+        setImgLabel(visual?.label || '');
       } catch {
         if (!cancelled) {
           const visual = getMachineVisual(activeId);
@@ -417,22 +422,27 @@ function Assessment({ onSubmit, result, busy }) {
     setImgLabel('');
   };
 
+  const handleSelectPrevious = (selectedId) => {
+    if (!selectedId) return;
+    setMachineInput(selectedId);
+    const match = savedMachines.find((m) => m.machineId === selectedId);
+    if (match) {
+      setSensors({
+        airTemp: String(match.airTemp ?? ''),
+        processTemp: String(match.processTemp ?? ''),
+        rotationalSpeed: String(match.rotationalSpeed ?? ''),
+        torque: String(match.torque ?? ''),
+        toolWear: String(match.toolWear ?? ''),
+      });
+    }
+  };
+
   const handleFormSubmit = async (event) => {
     event.preventDefault();
+    const form = event.currentTarget;
     const id = machineInput.trim();
-    if (!id || lookup.inDatabase) return;
-    try {
-      const res = await api.lookupMachine(id);
-      if (res.inDatabase) {
-        setLookup({ status: 'duplicate', inDatabase: true, machineId: id });
-        setImgSrc(null);
-        setImgLabel('');
-        return;
-      }
-    } catch {
-      // Backend will also enforce uniqueness on POST /api/predictions
-    }
-    await onSubmit(event);
+    if (!id) return;
+    await onSubmit({ preventDefault: () => { }, currentTarget: form });
   };
 
   const recommendation = result
@@ -443,45 +453,60 @@ function Assessment({ onSubmit, result, busy }) {
         : 'Operating within normal parameters. Continue routine scheduled monitoring.'
     : '';
 
+  const previousIds = savedMachines.length
+    ? savedMachines.map((m) => m.machineId)
+    : Array.from(new Set((predictions || []).map((p) => p.machineId).filter(Boolean)));
+
   return <>
     <PageHeading
       eyebrow="OPERATIONS / PREDICTION"
       title="New assessment"
-      description="Submit a live sensor reading for failure-risk analysis."
+      description="Submit a live sensor reading for failure-risk analysis or re-run a previously assessed machine."
       action={<button type="button" className="button button-secondary" onClick={handleRefresh}><RefreshCw size={15} /> Refresh</button>}
     />
     <div className="assessment-layout">
       <form className="surface assessment-form" onSubmit={handleFormSubmit}>
-        <div className="form-section-title"><span className="step-number">01</span><div><h2>Machine details</h2><p>Identify the equipment and current operating conditions.</p></div></div>
-        <label className="field field-wide">
-          <span>Machine ID</span>
-          <input
-            name="machineId"
-            required
-            maxLength="80"
-            value={machineInput}
-            onChange={(event) => setMachineInput(event.target.value)}
-          />
-          <small>Enter a unique Machine ID to register and assess the machine.</small>
-        </label>
-        {lookup.status === 'duplicate' && (
-          <div className="inline-message inline-error" style={{ marginLeft: '38px', marginBottom: '12px', maxWidth: '380px' }}>
-            <ShieldAlert size={15} />
-            <span>Machine ID already exists in the database. Please enter a unique Machine ID.</span>
-          </div>
-        )}
+        <div className="form-section-title"><span className="step-number">01</span><div><h2>Machine details</h2><p>Enter a new Machine ID or re-run a previously assessed machine.</p></div></div>
+        <div className="field-grid" style={{ marginBottom: '12px' }}>
+          <label className="field">
+            <span>Machine ID</span>
+            <input
+              name="machineId"
+              required
+              maxLength="80"
+              value={machineInput}
+              onChange={(event) => setMachineInput(event.target.value)}
+            />
+            <small>Enter a new or existing Machine ID.</small>
+          </label>
+          <label className="field">
+            <span>Re-run previous machine</span>
+            <select
+              aria-label="Re-run previous machine"
+              value={previousIds.includes(machineInput) ? machineInput : ''}
+              onChange={(event) => handleSelectPrevious(event.target.value)}
+              style={{ width: '100%', height: '38px', padding: '0 10px', border: '1px solid #cbd5e1', borderRadius: '6px', background: '#ffffff', color: 'var(--ink)', fontSize: '12.5px' }}
+            >
+              <option value="">-- Select pre-run machine --</option>
+              {previousIds.map((id) => (
+                <option key={id} value={id}>{id}</option>
+              ))}
+            </select>
+            <small>Loads saved Machine ID and latest sensor readings.</small>
+          </label>
+        </div>
         <div className="form-divider" />
         <div className="form-section-title"><span className="step-number">02</span><div><h2>Sensor readings</h2><p>Enter the latest measurements from the machine.</p></div></div>
         <div className="field-grid">
-          <NumberField name="airTemp" label="Air temperature" unit="K" />
-          <NumberField name="processTemp" label="Process temperature" unit="K" />
-          <NumberField name="rotationalSpeed" label="Rotational speed" unit="RPM" />
-          <NumberField name="torque" label="Torque" unit="Nm" />
-          <NumberField name="toolWear" label="Tool wear" unit="min" />
+          <NumberField name="airTemp" label="Air temperature" unit="K" value={sensors.airTemp} onChange={(val) => setSensors((s) => ({ ...s, airTemp: val }))} />
+          <NumberField name="processTemp" label="Process temperature" unit="K" value={sensors.processTemp} onChange={(val) => setSensors((s) => ({ ...s, processTemp: val }))} />
+          <NumberField name="rotationalSpeed" label="Rotational speed" unit="RPM" value={sensors.rotationalSpeed} onChange={(val) => setSensors((s) => ({ ...s, rotationalSpeed: val }))} />
+          <NumberField name="torque" label="Torque" unit="Nm" value={sensors.torque} onChange={(val) => setSensors((s) => ({ ...s, torque: val }))} />
+          <NumberField name="toolWear" label="Tool wear" unit="min" value={sensors.toolWear} onChange={(val) => setSensors((s) => ({ ...s, toolWear: val }))} />
         </div>
         <div className="form-actions">
           <span><ShieldAlert size={15} /> Values are stored with the assessment.</span>
-          <button className="button button-primary" disabled={busy || lookup.inDatabase}>
+          <button className="button button-primary" disabled={busy}>
             <Activity size={16} />{busy ? 'Assessing…' : 'Run assessment'}<ArrowRight size={15} />
           </button>
         </div>
@@ -489,12 +514,6 @@ function Assessment({ onSubmit, result, busy }) {
 
       <aside className="surface result-panel">
         <div className="eyebrow">ASSESSMENT RESULT</div>
-        {lookup.status === 'duplicate' && !result && (
-          <div className="inline-message inline-error" style={{ marginTop: '14px', textAlign: 'left' }}>
-            <ShieldAlert size={15} />
-            <span>Machine ID already exists. Duplicate machine registration is prevented.</span>
-          </div>
-        )}
         {imgSrc && (
           <div className="result-machine-preview">
             <img
@@ -529,8 +548,8 @@ function Assessment({ onSubmit, result, busy }) {
   </>;
 }
 
-function NumberField({ name, label, unit }) {
-  return <label className="field"><span>{label}</span><div className="number-input"><input type="number" name={name} required step="any" /><span>{unit}</span></div></label>;
+function NumberField({ name, label, unit, value, onChange }) {
+  return <label className="field"><span>{label}</span><div className="number-input"><input type="number" name={name} required step="any" value={value} onChange={(event) => onChange(event.target.value)} /><span>{unit}</span></div></label>;
 }
 
 function AlertLog({ alerts, loading }) {
@@ -591,14 +610,19 @@ function DatasetPage({ onSelectMachine }) {
   </>;
 }
 
-function ModelTraining({ model, busy, onTrain }) {
+function ModelTraining({ model, busy, onTrain, onTrainFile }) {
   const [trainedNotice, setTrainedNotice] = useState(null);
+  const [uploadFile, setUploadFile] = useState(null);
 
   const handleTrain = async () => {
     setTrainedNotice(null);
-    const response = await onTrain();
+    const response = uploadFile ? await onTrainFile(uploadFile) : await onTrain();
     if (response) {
-      setTrainedNotice(`Model training completed successfully! (${response.rows.toLocaleString()} records studied)`);
+      setTrainedNotice(
+        uploadFile
+          ? `Model training completed successfully! (${response.rows.toLocaleString()} records studied from ${uploadFile.name})`
+          : `Model training completed successfully! (${response.rows.toLocaleString()} records studied)`
+      );
     }
   };
 
@@ -641,7 +665,23 @@ function ModelTraining({ model, busy, onTrain }) {
           </div>
         </div>
 
-        <p className="train-helper-copy">Train the model using available machine data.</p>
+        <p className="train-helper-copy">Train the model using available machine data or upload a new CSV file.</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', margin: '10px 0 4px' }}>
+          <label className="button button-secondary" style={{ margin: 0 }}>
+            <FileUp size={15} /> {uploadFile ? uploadFile.name : 'Upload CSV file'}
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              style={{ display: 'none' }}
+              onChange={(event) => { setUploadFile(event.target.files?.[0] || null); setTrainedNotice(null); }}
+            />
+          </label>
+          {uploadFile && (
+            <button type="button" className="button button-secondary" disabled={busy} onClick={() => setUploadFile(null)}>
+              <X size={15} /> Clear
+            </button>
+          )}
+        </div>
         {busy && <div className="training-progress"><span /><span /></div>}
         {trainedNotice && (
           <div className="inline-message inline-success" style={{ marginTop: '12px' }}>
@@ -676,7 +716,8 @@ function ModelTraining({ model, busy, onTrain }) {
   </>;
 }
 
-function ModelEvaluation({ metrics, busy, onEvaluate }) {
+function ModelEvaluation({ metrics, busy, onTrainFile, onEvaluate }) {
+  const [selectedFile, setSelectedFile] = useState(null);
   const values = metrics ? [
     { name: 'Accuracy', value: metrics.accuracy, format: (value) => `${Number(value).toFixed(2)}%` },
     { name: 'Precision', value: metrics.precision, format: (value) => Number(value).toFixed(4) },
@@ -685,8 +726,42 @@ function ModelEvaluation({ metrics, busy, onEvaluate }) {
   ] : [];
   const confusion = metrics?.confusionMatrix;
   return <>
-    <PageHeading eyebrow="MODEL / VALIDATION" title="Model evaluation" description="Run 10-fold cross validation and inspect the actual metrics returned by Weka." action={<button className="button button-primary" onClick={onEvaluate} disabled={busy}><Gauge size={16} />{busy ? 'Evaluating…' : 'Evaluate model'}</button>} />
-    {busy && <div className="evaluation-loading"><LoaderCircle size={17} className="spin" />Running Weka evaluation on the configured dataset…</div>}
+    <PageHeading
+      eyebrow="MODEL / VALIDATION"
+      title="Model evaluation"
+      description="Upload a CSV file to train a new dataset or select a file to run 10-fold cross validation."
+      action={<button className="button button-primary" onClick={() => onEvaluate(selectedFile)} disabled={busy}><Gauge size={16} />{busy ? 'Evaluating…' : 'Evaluate model'}</button>}
+    />
+    <section className="surface" style={{ padding: '16px 20px', marginBottom: '16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+      <div>
+        <div className="eyebrow">DATASET FILE FOR TRAINING &amp; EVALUATION</div>
+        <strong style={{ fontSize: '13px', color: 'var(--navy-900)' }}>
+          {selectedFile ? `${selectedFile.name} (${(selectedFile.size / 1024).toFixed(1)} KB)` : 'Default: AI4I 2020 Machine Dataset'}
+        </strong>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+        <label className="button button-secondary" style={{ margin: 0 }}>
+          <FileUp size={15} /> {selectedFile ? 'Change CSV file' : 'Select CSV file'}
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            style={{ display: 'none' }}
+            onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+          />
+        </label>
+        {selectedFile && (
+          <>
+            <button type="button" className="button button-primary" disabled={busy} onClick={() => onTrainFile(selectedFile)}>
+              <Activity size={15} /> Train with file
+            </button>
+            <button type="button" className="button button-secondary" disabled={busy} onClick={() => setSelectedFile(null)}>
+              <X size={15} /> Clear
+            </button>
+          </>
+        )}
+      </div>
+    </section>
+    {busy && <div className="evaluation-loading"><LoaderCircle size={17} className="spin" />Running Weka operation on {selectedFile ? selectedFile.name : 'the configured dataset'}…</div>}
     {metrics ? <>
       <section className="evaluation-metrics">{values.map((item) => <article className="surface evaluation-metric" key={item.name}><span>{item.name}</span><strong>{item.format(item.value)}</strong><small>10-fold cross validation</small></article>)}</section>
       <section className="surface confusion-panel"><div className="surface-heading table-heading"><div><div className="eyebrow">CLASSIFICATION RESULTS</div><h2>Confusion matrix</h2></div><span className="table-note">{metrics.rowsEvaluated.toLocaleString()} rows evaluated</span></div>

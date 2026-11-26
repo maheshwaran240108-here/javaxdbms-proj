@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 :root {
-  font-family: 'DM Sans', 'Segoe UI', sans-serif;
+  font-family: 'Book Antiqua', Palatino, 'Palatino Linotype', Georgia, serif;
   color: #0f172a;
   background: #f3f6fa;
   font-synthesis: none;
@@ -70,9 +70,9 @@ input:focus-visible {
   flex-direction: column;
   width: 256px;
   padding: 20px 14px 18px;
-  color: #e2e8f0;
-  background: var(--navy-900);
-  border-right: 1px solid var(--navy-800);
+  color: #14532d;
+  background: #dcfce7;
+  border-right: 1px solid #bbf7d0;
   transition: width .22s cubic-bezier(.4, 0, .2, 1), padding .22s cubic-bezier(.4, 0, .2, 1), transform .2s ease;
 }
 
@@ -99,16 +99,16 @@ input:focus-visible {
   height: 36px;
   flex: 0 0 36px;
   place-items: center;
-  color: #5eead4;
-  background: var(--navy-800);
-  border: 1px solid rgba(20, 184, 166, .35);
+  color: #15803d;
+  background: #bbf7d0;
+  border: 1px solid #86efac;
   border-radius: 9px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .2);
+  box-shadow: 0 2px 6px rgba(20, 83, 45, .08);
 }
 
 .brand-name {
-  color: #ffffff;
-  font: 700 12.5px/1.3 'Manrope', sans-serif;
+  color: #14532d;
+  font: 700 13px/1.3 'Book Antiqua', Palatino, Georgia, serif;
   letter-spacing: -.01em;
 }
 
@@ -118,7 +118,7 @@ input:focus-visible {
   height: 32px;
   flex: 0 0 32px;
   place-items: center;
-  color: #94a3b8;
+  color: #166534;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 7px;
@@ -126,9 +126,9 @@ input:focus-visible {
 }
 
 .sidebar-toggle:hover {
-  color: #5eead4;
-  background: var(--navy-800);
-  border-color: var(--navy-700);
+  color: #14532d;
+  background: #bbf7d0;
+  border-color: #86efac;
 }
 
 .side-nav {
@@ -145,12 +145,12 @@ input:focus-visible {
   width: 100%;
   min-height: 42px;
   padding: 0 12px;
-  color: #cbd5e1;
+  color: #166534;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
   text-align: left;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
   transition: background .16s ease, color .16s ease, border-color .16s ease;
@@ -161,19 +161,19 @@ input:focus-visible {
 }
 
 .nav-item:hover {
-  color: #ffffff;
-  background: var(--navy-800);
+  color: #14532d;
+  background: #bbf7d0;
 }
 
 .nav-item.active {
   color: #ffffff;
-  background: rgba(13, 148, 136, .18);
-  border-color: rgba(20, 184, 166, .4);
+  background: #15803d;
+  border-color: #166534;
   font-weight: 600;
 }
 
 .nav-item.active svg {
-  color: #2dd4bf;
+  color: #ffffff;
 }
 
 .nav-label {
@@ -238,6 +238,7 @@ input:focus-visible {
 .main-area {
   min-height: 100vh;
   margin-left: 256px;
+  background: linear-gradient(135deg, #dcfce7 0%, #dcfce7 28%, #ffffff 32%, #ffffff 68%, #dcfce7 72%, #dcfce7 100%);
   transition: margin-left .22s cubic-bezier(.4, 0, .2, 1);
 }
 
@@ -2404,4 +2405,22 @@ td:first-child {
   font-size: 11.5px;
   line-height: 1.5;
   text-align: left;
+}
+
+/* Global Book Antiqua Typography Override */
+body,
+h1,
+h2,
+h3,
+h4,
+.page-heading h1,
+.surface-heading h2,
+.metric > strong,
+.brand-name,
+.modal-header h2,
+.model-card h2,
+.model-side-panel h2,
+.evaluation-metric strong,
+.report-model-metrics strong {
+  font-family: 'Book Antiqua', Palatino, 'Palatino Linotype', Georgia, serif;
 }

@@ -28,5 +28,17 @@ export const api = {
     headers: { 'Content-Type': 'text/csv' },
   }),
   train: () => request({ url: '/model/train', method: 'POST' }),
+  trainWithFile: async (file) => request({
+    url: '/model/train-file',
+    method: 'POST',
+    data: await file.text(),
+    headers: { 'Content-Type': 'text/csv' },
+  }),
   evaluate: () => request({ url: '/model/evaluate', method: 'POST' }),
+  evaluateWithFile: async (file) => request({
+    url: '/model/evaluate-file',
+    method: 'POST',
+    data: await file.text(),
+    headers: { 'Content-Type': 'text/csv' },
+  }),
 };

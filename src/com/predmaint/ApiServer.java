@@ -98,8 +98,12 @@ public class ApiServer {
                         "model", "model_artifacts/random_forest.model")));
             } else if ("POST".equals(method) && "/api/model/train".equals(path)) {
                 send(exchange, 200, trainModel());
+            } else if ("POST".equals(method) && "/api/model/train-file".equals(path)) {
+                send(exchange, 200, trainModelFromUpload(exchange));
             } else if ("POST".equals(method) && "/api/model/evaluate".equals(path)) {
                 send(exchange, 200, evaluateModel());
+            } else if ("POST".equals(method) && "/api/model/evaluate-file".equals(path)) {
+                send(exchange, 200, evaluateModelFromUpload(exchange));
             } else if ("GET".equals(method) && "/api/reports".equals(path)) {
                 send(exchange, 200, reports());
             } else if ("GET".equals(method) && "/api/machines/lookup".equals(path)) {
@@ -334,13 +338,6 @@ public class ApiServer {
         Map<String, String> fields = parseFields(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
         String machineId = required(fields, "machineId").trim();
         if (machineId.isEmpty()) throw new IllegalArgumentException("Machine ID is required.");
-        try (java.sql.Connection conn = com.predmaint.config.DatabaseConfig.getConnection();
-             java.sql.PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM machine_readings WHERE UPPER(machine_id) = ? LIMIT 1")) {
-            ps.setString(1, machineId.toUpperCase(java.util.Locale.ROOT));
-            try (java.sql.ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) throw new IllegalArgumentException("Machine ID already exists.");
-            }
-        }
 
         MachineReading reading = new MachineReading(machineId,
                 number(fields, "airTemp"), number(fields, "processTemp"),
@@ -378,6 +375,36 @@ public class ApiServer {
             synchronized (model) {
                 metrics = model.evaluateModelMetrics(data);
             }
+        }
+        return json(metrics);
+    }
+
+    private Instances loadUploadedCsv(HttpExchange exchange) throws Exception {
+        byte[] content = exchange.getRequestBody().readAllBytes();
+        if (content.length == 0) throw new IllegalArgumentException("Choose a non-empty CSV file.");
+        if (content.length > 25 * 1024 * 1024) throw new IllegalArgumentException("CSV file must be smaller than 25 MB.");
+        try {
+            return CSVImporterService.loadDataset(new ByteArrayInputStream(content));
+        } catch (IOException ex) {
+            throw new IllegalArgumentException("The uploaded file could not be parsed as CSV.", ex);
+        }
+    }
+
+    private String trainModelFromUpload(HttpExchange exchange) throws Exception {
+        Instances data = loadUploadedCsv(exchange);
+        synchronized (model) {
+            model.trainModel(data);
+            cachedModelMetrics = null;
+            cachedModelMtime = -1L;
+        }
+        return json(map("message", "Random forest training completed", "rows", data.numInstances()));
+    }
+
+    private String evaluateModelFromUpload(HttpExchange exchange) throws Exception {
+        Instances data = loadUploadedCsv(exchange);
+        Map<String, Object> metrics;
+        synchronized (model) {
+            metrics = model.evaluateModelMetrics(data);
         }
         return json(metrics);
     }
